@@ -1,0 +1,51 @@
+\documentclass[border=0.5cm]{standalone}
+
+\usepackage{xparse}
+\usepackage{expl3}
+\usepackage{tikz}
+\usetikzlibrary{matrix}
+
+\usepackage{transposetikzmatrix}
+
+
+\begin{document}
+    
+    \tikzset{
+        sample matrix/.style={draw, font=\Large, matrix of nodes, ampersand replacement=\&}
+    }
+
+    \begin{tikzpicture}
+        \def\samplematrix{
+            a \& d \& g \& j \\
+            b \& e \& h \& k \\
+            c \& f \& {
+                        \tikz[baseline=0.1cm]
+                        \node[draw, minimum width=3cm] (complex-example-node) 
+                            {$
+                                e^
+                                {
+                                    \tikz[baseline=(char.base)]
+                                    \node[draw, shape=circle, minimum width=1pt, inner sep=1pt] (char) 
+                                        {i}
+                                    ;
+                                    \pi
+                                }
+                                =-1
+                            $}; 
+                      } \& l \\
+        }
+        
+        \matrix (original) at (0, 0) [sample matrix] {
+            \samplematrix
+        };
+        \matrix (transposed) at (7cm, 0) [sample matrix] {
+            \TransposeTikzMatrix\samplematrix
+        };
+        
+        \draw[->, shorten <=0.2cm, shorten >=0.2cm] 
+            (original) 
+            -- node[above] {\textit{transpose}} (transposed)
+        ;
+    \end{tikzpicture}
+    
+\end{document}

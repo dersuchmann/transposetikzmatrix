@@ -1,0 +1,209 @@
+\ProvidesExplPackage {transposetikzmatrix} {2024-08-07} {1.0} {Allows to transpose TikZ matrices}
+
+% Required packages
+\RequirePackage{expl3}
+\RequirePackage{xparse}
+
+% Package options
+\RequirePackage{kvoptions}
+\DeclareStringOption[&]{ampersand}
+\ProcessKeyvalOptions*\relax
+
+% ----------------------------------------------------------------
+
+% In this package, we use seqs that may contain other seqs as items.
+% Note that to check whether a seq item is an inner seq, we have to rely on 
+% unstable internals of how seqs are implementated at the tl level.
+
+% Global variable to use with \seq_pop_right:NN and similar if we are not interested
+% in the item and just want to remove it.
+\seq_new:N \l_unused
+
+% Variable for the control sequence used to separate row entries in the TikZ matrix.
+\tl_set:No \l_ampersand { \cs:w \transposetikzmatrix@ampersand \cs_end: }
+
+% Checks if tl is actually a seq.
+\cs_new:Npn \tl_if_seq:NTF #1 #2 #3
+{
+    % A seq is internally represented as a tl that starts with the token \s__seq. 
+    % If the seq is empty, this is the only token; otherwise, the second token 
+    % is required to be \__seq:item:n. These checks suffice to identify a seq in tl form.
+
+    % Retrieve first two tokens (second token will be empty if absent) and put into tls
+    \tl_set:Nx \l_first_item_tl { \tl_item:Nn #1 {1} }
+    \tl_set:Nx \l_second_item_tl { \tl_item:Nn #1 {2} }
+    \tl_set:Nn \l_seq_intro_tl { \s__seq }
+    \tl_set:Nn \l_seq_separator_tl { \__seq_item:n }
+
+    % Check if tokens match structure of raw
+    \bool_lazy_and:nnTF
+        { \tl_if_eq_p:NN \l_first_item_tl \l_seq_intro_tl }
+        {
+            \bool_lazy_or_p:nn
+                { \int_compare_p:nNn { \tl_count:N #1 } > { 1 } }
+                { \tl_if_eq_p:NN \l_second_item_tl \l_seq_separator_tl }
+        }
+        { #2 }
+        { #3 }
+}
+
+% Accesses a nested seq from a given outer seq and an item index.
+\cs_new:Npn \seq_set_item_eq:NNn #1 #2 #3
+{
+    % Currently, \seq_item:Nn always returns a seq item as a tl, so even if the item 
+    % is a nested seq, we have to use \tl_set:Nx to assign the item to a seq variable.
+
+    \tl_set:Nx #1 { \seq_item:Nn #2 {#3} }
+}
+
+% Creates a seq (composed of nested seqs of equal count) from its transposed form.
+\cs_new:Npn \seq_set_from_transposed:NN #1 #2
+{
+    % Define variables
+    \seq_set_eq:NN \l_outer_seq #2
+    \seq_new:N \l_transposed_outer_seq
+
+    \int_new:N \l_row_count % outer
+    \int_new:N \l_column_count % inner
+
+    % Retrieve number of "rows" and "columns" of the "matrix"
+    \int_set:Nn \l_row_count { \seq_count:N \l_outer_seq }
+
+    \seq_set_item_eq:NNn \l_inner_seq \l_outer_seq { 1 }        
+    \int_set:Nn \l_column_count { \seq_count:N \l_inner_seq }
+
+    % For each column index, take corresponding entries from all rows and concatenate
+    % them into one row (n-th transposed row contains n-th entry from each original row)
+    \int_step_variable:nNn { \l_column_count } \l_column_index
+    {
+        \seq_clear_new:N \l_transposed_inner_seq
+
+        \int_step_variable:nNn { \l_row_count } \l_row_index
+        {
+            % Retrieve row
+            \seq_set_item_eq:NNn \l_inner_seq \l_outer_seq { \l_row_index }
+
+            % Retrieve entry
+            \tl_set:Nx \l_entry_tl { \seq_item:Nn \l_inner_seq { \l_column_index } }
+
+            % Add entry to transposed row
+            \seq_put_right:NV \l_transposed_inner_seq \l_entry_tl
+        }
+
+        % Add transposed row to transposed matrix
+        \seq_put_right:NV \l_transposed_outer_seq \l_transposed_inner_seq
+    }
+
+    % Assign result to out parameter
+    \seq_set_eq:NN #1 \l_transposed_outer_seq
+}
+
+% Returns a new seq separators added between consecutive items of the original seq.
+\cs_new:Npn \seq_set_join:NNn #1 #2 #3
+{
+    % Define variables
+    \seq_clear_new:N \l_joined_seq
+
+    % Insert separator before each item
+    \seq_map_variable:NNn #2 \l_entry
+    {
+        \seq_put_right:Nn \l_joined_seq {#3}
+        \seq_put_right:NV \l_joined_seq \l_entry
+    }
+
+    % Remove initial separator
+    \seq_pop_left:NN \l_joined_seq \l_unused
+
+    % Assign result to out parameter
+    \seq_set_eq:NN #1 \l_joined_seq
+}
+
+%\cs_generate_variant:Nn \seq_set_split:NnV { NxV }
+\cs_generate_variant:Nn \seq_set_join:NNn { NNV }
+
+
+\cs_new:Npn \l_transpose_tikz_matrix:n #1
+{
+    % Define variables
+    \tl_set:Nn \l_tikz_matrix_tl {#1}
+    \tl_new:N \l_transposed_tikz_matrix_tl
+
+    \seq_new:N \l_xouter_seq
+    \seq_new:N \l_xinner_seq
+    \seq_new:N \l_transposed_tikz_matrix_row_entries_seq
+
+    % Split
+    \seq_set_split:NnV \l_tikz_matrix_rows_seq { \\ } \l_tikz_matrix_tl
+    
+    % Loop through the rows 
+    \seq_map_variable:NNn \l_tikz_matrix_rows_seq \l_tikz_matrix_row_tl
+    {
+        % Clear variables
+        \seq_clear:N \l_xinner_seq
+
+        % Split
+        \seq_set_split:NVV \l_tikz_matrix_row_entries_seq \l_ampersand \l_tikz_matrix_row_tl
+        
+        % Loop through the columns
+        \seq_map_variable:NNn \l_tikz_matrix_row_entries_seq \l_entry_tl
+        {
+            \seq_put_right:NV \l_xinner_seq \l_entry_tl
+        }
+
+        % Insert row to outer variable
+        \seq_put_right:NV \l_xouter_seq {\l_xinner_seq}
+    }    
+
+    % We finish the last column with another \\ separator,
+    % but we do not end rows with another \& separator,
+    % so we only have to remove and add the last row from the matrices.
+
+    % Remove last row
+    \seq_pop_right:NN \l_xouter_seq \l_unused
+
+    % Transpose
+    \seq_set_from_transposed:NN \l_transposed_outer_seq \l_xouter_seq
+
+    % Add last row back
+    \seq_put_right:Nn \l_transposed_outer_seq {\s__seq \__seq_item:n {}}
+    
+    % Add separators back in
+    \seq_new:N \l_transposed_outer_with_joined_inner_seq
+    \seq_new:N \l_transposed_joined_outer_seq
+    \seq_new:N \l_joined_inner_raw
+    \seq_map_variable:NNn \l_transposed_outer_seq \l_xinner_seq
+    {
+        \seq_set_join:NNV \l_joined_inner_seq \l_xinner_seq \l_ampersand
+        \seq_put_right:NV \l_transposed_outer_with_joined_inner_seq \l_joined_inner_seq
+    }
+    \seq_set_join:NNn \l_transposed_joined_outer_seq \l_transposed_outer_with_joined_inner_seq { \\ }
+
+    % Convert seq of seqs to token list
+    \seq_map_variable:NNn \l_transposed_joined_outer_seq \l_xinner_unknown
+    {   
+        \tl_if_seq:NTF \l_xinner_unknown
+            {
+                % Convert inner seq to tl
+                \tl_set:Nx \l_xinner_tl { \seq_use:Nn \l_xinner_unknown { } }
+            }
+            {
+                % Use inner tl directly
+                \tl_set_eq:NN \l_xinner_tl \l_xinner_unknown
+            }
+
+            % Insert to outer variable
+            \seq_put_right:NV \l_transposed_tikz_matrix_row_entries_seq \l_xinner_tl
+    }
+
+    % Convert outer seq to tl
+    \tl_set:Nx \l_transposed_tikz_matrix_tl { \seq_use:Nn \l_transposed_tikz_matrix_row_entries_seq { } }
+
+    % Return result
+    \tl_use:N \l_transposed_tikz_matrix_tl
+}
+
+% `xparse` command to transpose a TikZ matrix; it must be defined with `ampersand replacement=\&`.
+\NewDocumentCommand \TransposeTikzMatrix {m}
+{
+    \exp_args:No \l_transpose_tikz_matrix:n {#1}
+}
